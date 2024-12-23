@@ -81,6 +81,8 @@ class CustomCAV:
         self.required_distance_from_follower = None
         self.current_distance_from_follower = None
 
+        self.lane_change_leader_speed = None
+
         self.simTime = 0
 
         self.WithAgreementPhase = withAgree
@@ -313,6 +315,8 @@ class CustomCAV:
 
             # 前方車両との距離 < safety_gap の場合
             else:
+                if self.do_not_speed_up == True:
+                    return
                 if speed_diff >= 0:
                     # 通常の減速
                     duration = min(ttc_with_safety_margin, min_duration)
@@ -360,7 +364,7 @@ class CustomCAV:
 
     def _emergencyBreak(self, targetSpeed):
         # TODO 可能なら動的に速度を調整する
-        targetSpeed = 0.5
+        targetSpeed = 2
         self.emergency_brake_counter += 1
         traci.vehicle.setSpeed(self.id, targetSpeed)
 
@@ -415,11 +419,17 @@ class CustomCAV:
             supporting_vehicle = vehicle_instances[self.receiving_cooperative_from_id]
 
             # 車線変更に適した速度に調整
-            target_speed = self._calculate_target_speed(
-                self.speed,
-                self.current_distance_from_leader,
-                self.required_distance_from_leader,
-            )
+            if self.lane_change_leader_speed is None:
+                target_speed = min(self.speed, supporting_vehicle.speed)
+            else:
+                target_speed = min(
+                    self._calculate_target_speed(
+                        self.lane_change_leader_speed,
+                        self.current_distance_from_leader,
+                        self.required_distance_from_leader,
+                    ),
+                    supporting_vehicle.speed,
+                )
 
             # TODO 後方車輌が徐々に減速しているのでsafe_durationがstepごとに大きくなってしまい減速が遅くなるため今は明示的に指定してる
             # safe_duration = self._calculateSafeDecelDuration(self.speed - target_speed)
@@ -429,17 +439,18 @@ class CustomCAV:
             supporting_vehicle._adjustSupportingSpeed(
                 self.current_distance_from_follower,
                 self.required_distance_from_follower,
+                self.speed,
             )
 
     """ 車線変更を支援する側の速度の調整 """
 
-    def _adjustSupportingSpeed(self, current_distance, required_distance):
+    def _adjustSupportingSpeed(self, current_distance, required_distance, required_speed):
         if self.leader_distance is not None and self.leader_distance < minGap:
             self._emergencyBreak(self.leader_speed)
             return
         # 安全な車間距離を確保しつつ速度を調整
         target_speed = self._calculate_target_speed(
-            self.speed, current_distance, required_distance
+            required_speed, current_distance, required_distance
         )
         safe_duration = self._calculateSafeDecelDuration(self.speed - target_speed)
         traci.vehicle.slowDown(self.id, target_speed, safe_duration)
@@ -447,14 +458,13 @@ class CustomCAV:
     """ 車線変更に適した速度を計算 """
 
     def _calculate_target_speed(
-        self, current_speed, current_distance, required_distance
+        self, required_speed, current_distance, required_distance
     ):
         if required_distance is None or current_distance is None:
-            return current_speed
+            return required_speed
 
         decelaration_rate = max(0.6, current_distance / required_distance)
-        return max(current_speed * decelaration_rate, 0.5)
-
+        return max(required_speed * decelaration_rate, 0.5)
 
     """ 協調車両を決定 """
 
@@ -498,6 +508,7 @@ class CustomCAV:
         self.current_distance_from_follower = None
         self.required_distance_from_leader = None
         self.current_distance_from_leader = None
+        self.lane_change_leader_speed = None
 
         if self.receiving_cooperative_from_id in vehicle_instances:
             supporting_vehicle = vehicle_instances[self.receiving_cooperative_from_id]
@@ -565,17 +576,7 @@ class CustomCAV:
                 follower = vehicle_instances[follower_id]
                 speed_diff = follower.speed - self.speed
 
-                # 後続車両の制動可能距離を計算
-                # v^2 = v0^2 + 2ax から制動距離を計算
-                follower_stopping_distance = (speed_diff**2) / (2 * abs(maxDecel))
-                # 反応時間分の走行距離
-                reaction_distance = speed_diff * reactionTime
-                required_distance = (
-                    self.length
-                    + minGap * 2
-                    + follower_stopping_distance
-                    + reaction_distance
-                )
+                required_distance = follower.length + follower.safety_gap * (1 + speed_diff / follower.speed)
 
                 if follower_distance < required_distance:
                     self.current_distance_from_follower = follower_distance
@@ -589,15 +590,10 @@ class CustomCAV:
                 leader = vehicle_instances[leader_id]
                 speed_diff = self.speed - leader.speed
 
-                # 自車両の制動可能距離を計算
-                own_stopping_distance = (speed_diff**2) / (2 * abs(maxDecel))
-                # 反応時間分の走行距離
-                reaction_distance = speed_diff * reactionTime
-                required_distance = (
-                    self.length + minGap * 2 + own_stopping_distance + reaction_distance
-                )
+                required_distance = self.length + self.safety_gap * (1 + speed_diff / self.speed)
 
                 if leader_distance < required_distance:
+                    self.lane_change_leader_speed = leader.speed
                     self.current_distance_from_leader = leader_distance
                     self.required_distance_from_leader = required_distance
                     return False
