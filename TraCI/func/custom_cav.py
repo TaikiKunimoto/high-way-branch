@@ -314,6 +314,7 @@ class CustomCAV:
                         # 通常の減速
                         duration = min(ttc_with_safety_margin, min_duration)
                         traci.vehicle.slowDown(self.id, self.leader_speed, duration)
+                        return
                 else:
                     return
 
