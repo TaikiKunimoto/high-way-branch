@@ -359,7 +359,6 @@ class CustomCAV:
     """ 衝突回避のための速度調整 """
 
     def _emergencyBreak(self, targetSpeed):
-        print(f"Emergency break: {self.id}")
         # TODO 可能なら動的に速度を調整する
         targetSpeed = 0.5
         self.emergency_brake_counter += 1
@@ -383,11 +382,7 @@ class CustomCAV:
                 supporting_vehicle = vehicle_instances[
                     self.receiving_cooperative_from_id
                 ]
-                supporting_vehicle_pos = traci.vehicle.getLanePosition(
-                    supporting_vehicle.id
-                )
-                own_pos = traci.vehicle.getLanePosition(self.id)
-                position_diff = own_pos - supporting_vehicle_pos
+                position_diff = self.pos_x - supporting_vehicle.pos_x
             else:
                 position_diff = -1 * math.inf
 
@@ -418,45 +413,48 @@ class CustomCAV:
             return
         if self.receiving_cooperative_from_id:
             supporting_vehicle = vehicle_instances[self.receiving_cooperative_from_id]
-            supporting_vehicle_speed = supporting_vehicle.speed
-            own_position = traci.vehicle.getLanePosition(self.id)
 
             # 車線変更に適した速度に調整
-            target_speed = supporting_vehicle_speed
+            target_speed = self._calculate_target_speed(
+                self.speed,
+                self.current_distance_from_leader,
+                self.required_distance_from_leader,
+            )
 
             # TODO 後方車輌が徐々に減速しているのでsafe_durationがstepごとに大きくなってしまい減速が遅くなるため今は明示的に指定してる
             # safe_duration = self._calculateSafeDecelDuration(self.speed - target_speed)
             traci.vehicle.slowDown(self.id, target_speed, 0.5)
 
             # 協調車両の速度も調整
-            supporting_vehicle._adjustSupportingSpeed(self.speed, own_position)
+            supporting_vehicle._adjustSupportingSpeed(
+                self.current_distance_from_follower,
+                self.required_distance_from_follower,
+            )
 
     """ 車線変更を支援する側の速度の調整 """
 
     def _adjustSupportingSpeed(self, current_distance, required_distance):
         if self.leader_distance is not None and self.leader_distance < minGap:
-            # 急ブレーキ
             self._emergencyBreak(self.leader_speed)
             return
-        own_position = traci.vehicle.getLanePosition(self.id)
         # 安全な車間距離を確保しつつ速度を調整
-        target_speed = self._calculateSupportingSpeed(
-            requesting_speed, requesting_position, own_position
+        target_speed = self._calculate_target_speed(
+            self.speed, current_distance, required_distance
         )
         safe_duration = self._calculateSafeDecelDuration(self.speed - target_speed)
         traci.vehicle.slowDown(self.id, target_speed, safe_duration)
 
-    """ 車線変更を支援する側の適切な速度を計算 """
-    def _calculateSupportingSpeed(self, requesting_speed, requesting_pos, own_pos):
-        position_diff = requesting_pos - own_pos
+    """ 車線変更に適した速度を計算 """
 
-        if position_diff < self.safety_gap:
-            # 車間距離が不足 → より大きく減速して車間を開ける
-            deceleration_rate = max(0.6, position_diff / self.safety_gap)
-            return max(requesting_speed * deceleration_rate, 0)
-        else:
-            # 適切な車間距離がある → 緩やかに減速して車間を維持
-            return requesting_speed * 0.9
+    def _calculate_target_speed(
+        self, current_speed, current_distance, required_distance
+    ):
+        if required_distance is None or current_distance is None:
+            return current_speed
+
+        decelaration_rate = max(0.6, current_distance / required_distance)
+        return max(current_speed * decelaration_rate, 0.5)
+
 
     """ 協調車両を決定 """
 
