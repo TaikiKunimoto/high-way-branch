@@ -73,6 +73,8 @@ def run(inflow_pass, inflow_exit):
         running_list = traci.vehicle.getIDList()
 
         poplist = []
+        # [TSK-151] このステップで判断を終えた走行中の車両
+        active_instances = []
 
         congestion_point = _getCongestionPoint()
         # tail position を記録
@@ -131,10 +133,9 @@ def run(inflow_pass, inflow_exit):
             ins.updateStatus(congestion_point)
             # 自身の行動(Priority)を更新
             ins.decideNextActionAndPriority()
-            # 車線変更を実行
-            ins.executeLaneChange(lane_change_history)
-            # 車両の速度を更新
-            ins.controlSpeed()
+            # [TSK-151] 車線変更・速度制御・記録は、全車両の判断を終えてから行う
+            active_instances.append(ins)
+            continue
 
             # use in debug
             # if ins.lane == 2:
@@ -149,6 +150,21 @@ def run(inflow_pass, inflow_exit):
             if ins.leader_distance is not None:
                 stats.calculate_TTC(ins.leader_distance, ins.leader_speed, ins.speed)
 
+            _record_lane_data(ins.laneID, ins.lane_pos, ins.speed)
+
+        # [TSK-151] Step 3: 車線変更を希望する車両を優先度の降順（同じ優先度は分流地点に近い順）に処理
+        for ins in sorted(
+            active_instances,
+            key=lambda v: (-v.priority, -(v.lane_pos if v.lane_pos is not None else 0.0)),
+        ):
+            ins.executeLaneChange(lane_change_history)
+
+        # [TSK-151] 速度制御と記録（元のループ内の処理と同じ）
+        for ins in active_instances:
+            ins.controlSpeed()
+            _updateLaneQueue(ins.id)
+            if ins.leader_distance is not None:
+                stats.calculate_TTC(ins.leader_distance, ins.leader_speed, ins.speed)
             _record_lane_data(ins.laneID, ins.lane_pos, ins.speed)
 
         # 車両インスタンスを削除
