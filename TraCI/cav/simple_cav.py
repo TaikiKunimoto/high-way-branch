@@ -297,8 +297,9 @@ class SimpleCAV:
             self.priority = 0
 
         # 車線変更中の場合は行動を継続
-        if self.lane_change_status == LaneChangeStatus.ALL_ALLOWED and (
-            self.status == CarStatus.LANE_CHANGING or self.status == CarStatus.YIELDING
+        # [TSK-151] 協調中(YIELDING)の車両はゾーンの外でも判断を上書きしない
+        if self.status == CarStatus.YIELDING or (
+            self.lane_change_status == LaneChangeStatus.ALL_ALLOWED and self.status == CarStatus.LANE_CHANGING
         ):
             return
 
@@ -716,7 +717,12 @@ class SimpleCAV:
         for vehicle_id, distance in candidates:
             if vehicle_id in vehicle_instances:
                 vehicle = vehicle_instances[vehicle_id]
-                if vehicle.status == CarStatus.NORMAL or vehicle.status == CarStatus.LANE_CHANGING:
+                if (
+                    vehicle.status == CarStatus.NORMAL
+                    or vehicle.status == CarStatus.LANE_CHANGING
+                    # [TSK-151] 自分の協調車両は候補に残す（車線変更の完了まで維持）
+                    or vehicle_id == self.receiving_cooperative_from_id
+                ):
                     viable_candidates.append((vehicle_id, distance))
 
         # 候補車両があれば、最も近い車両を選択

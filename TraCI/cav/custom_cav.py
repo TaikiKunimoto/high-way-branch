@@ -296,8 +296,10 @@ class CustomCAV:
             self.params.priority = 0
 
         # 車線変更中の場合は行動を継続
-        if self.params.lane_change_status == LaneChangeStatus.ALL_ALLOWED and (
-            self.params.status in (CarStatus.LANE_CHANGING, CarStatus.YIELDING)
+        # [TSK-151] 協調中(YIELDING)の車両はゾーンの外でも判断を上書きしない
+        if self.params.status == CarStatus.YIELDING or (
+            self.params.lane_change_status == LaneChangeStatus.ALL_ALLOWED
+            and self.params.status == CarStatus.LANE_CHANGING
         ):
             return
 
@@ -695,7 +697,10 @@ class CustomCAV:
             if veh_id in vehicle_instances:
                 veh = vehicle_instances[veh_id]
                 if veh.params.priority < self.params.priority and (
-                    veh.params.status == CarStatus.NORMAL or veh.params.status == CarStatus.LANE_CHANGING
+                    veh.params.status == CarStatus.NORMAL
+                    or veh.params.status == CarStatus.LANE_CHANGING
+                    # [TSK-151] 自分の協調車両は候補に残す（車線変更の完了まで維持）
+                    or veh_id == self.params.receiving_cooperative_from_id
                 ):  # 自身より優先度が低い車輌に限定
                     viable_candidates.append((veh_id, distance))
 

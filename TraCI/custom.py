@@ -90,6 +90,8 @@ def run(
             last_recorded_second = current_sec
 
         poplist = []
+        # [TSK-151] このステップで判断を終えた走行中の車両
+        active_vehicles: list[CustomCAV] = []
 
         # 各車両インスタンスの更新処理
         for index, veh in enumerate(state.vehicle_instance):
@@ -133,7 +135,18 @@ def run(
             congestion_point = _get_congestion_point()
             veh.update_status(congestion_point)
             veh.decide_next_action_and_priority()
+            # [TSK-151] 車線変更・速度制御・記録は、全車両の判断を終えてから行う
+            active_vehicles.append(veh)
+
+        # [TSK-151] 車線変更を優先度の降順（同じ優先度は分流地点に近い順）に実行
+        for veh in sorted(
+            active_vehicles,
+            key=lambda v: (-v.params.priority, -(v.params.lane_pos if v.params.lane_pos is not None else 0.0)),
+        ):
             veh.execute_lane_change(lane_change_history)
+
+        # [TSK-151] 速度制御と記録（元のループ内の処理と同じ）
+        for veh in active_vehicles:
             veh.control_speed()
 
             _update_lane_queue(state, veh.params.id)
